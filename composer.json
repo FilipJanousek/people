@@ -1,0 +1,20 @@
+{
+    "name": "saburo/admin_people",
+    "autoload": {
+        "psr-4": {
+            "Saburo\\AdminPeople\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "Filip Janoušek",
+            "email": "fjanousek@ab-plus.eu"
+        }
+    ],
+    "require": {
+        "slim/psr7": "^1.7",
+        "dibi/dibi": "^5.0",
+        "slim/slim": "^4.14",
+        "symfony/validator": "^6.4"
+    }
+}

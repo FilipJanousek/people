@@ -1,0 +1,10 @@
+<?php
+
+$db_config = [
+	'driver' => 'mysqli',
+	'host' => 'saburo_admin_people_mysql:3306',
+	'username' => '',
+	'password' => '',
+	'database' => '',
+	'charset'  => 'utf8',
+];
