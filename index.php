@@ -13,13 +13,6 @@ require_once('config.php');
 require_once('vendor/autoload.php');
 require_once('src/middleware/jsonBodyParser/Middleware.php');
 
-const CONTACT_TYPE_EMAIL = 'EMAIL';
-const CONTACT_TYPE_PHONE = 'PHONE';
-
-const CATEGORY_CODE_ACTOR = 'ACTOR';
-const CATEGORY_CODE_MUSICIAN = 'MUSICIAN';
-const CATEGORY_CODE_FAMILY = 'FAMILY';
-
 $db = new Dibi\Connection($db_config);
 $app = AppFactory::create();
 
@@ -39,8 +32,27 @@ $app->group('/api', function (RouteCollectorProxy $group) use ($db) {
             ->withStatus(400);
         }
 
-        $validator = Validation::createValidator();
+        
+        $humansCategoriesTypes = $db->query('SELECT * FROM humans_categories_types');
+        $categoriesTypes = [];
+        $allowedCategoryCodes = [];
 
+        while($row = $humansCategoriesTypes->fetch()) {
+            $categoriesTypes[$row->code] = ['id' => $row->id, 'title' => $row->title];
+            $allowedCategoryCodes[] = $row->code;
+        }
+
+        $humansContactsTypes = $db->query('SELECT * FROM humans_contacts_types');
+        $contactsTypes = [];
+        $allowedContactCodes = [];
+
+        while($row = $humansContactsTypes->fetch()) {
+            $contactsTypes[$row->code] = ['id' => $row->id, 'title' => $row->title];
+            $allowedContactCodes[] = $row->code;
+           
+        }
+
+        $validator = Validation::createValidator();
         $humanConstraints = new Assert\Collection([
             'fields' => [
                 'firstname' => new Assert\NotBlank(['message' => 'The field firstname for human cannot be blank.']),
@@ -55,7 +67,7 @@ $app->group('/api', function (RouteCollectorProxy $group) use ($db) {
                 'religion' => new Assert\Optional([new Assert\NotBlank(['message' => 'The field religion for human cannot be blank if present.'])]),
                 'category' => new Assert\Optional([
                     new Assert\NotBlank(['message' => 'The field category for human cannot be blank if present.']),
-                    new Assert\Choice(['choices' => [CATEGORY_CODE_ACTOR, CATEGORY_CODE_MUSICIAN, CATEGORY_CODE_FAMILY], 'message' => 'The field category for human must be either ACTOR, MUSICIAN or FAMILY.'])
+                    new Assert\Choice(['choices' => $allowedCategoryCodes, 'message' => 'It has been selected an invalid value for category. Valid values are: ' . implode(', ', array_keys($allowedCategoryCodes))])
                 ])
             ],
             'allowExtraFields' => false, // Povolit extra fieldy
@@ -125,12 +137,13 @@ $app->group('/api', function (RouteCollectorProxy $group) use ($db) {
         }
 
         if(isset($payload['contacts'])) {
+
             $constraints = new Assert\All([
                 new Assert\Collection([
                     'fields' => [
                         'type' => [
                             new Assert\NotBlank(['message' => 'The field type for contacts cannot be blank.']), 
-                            new Assert\Choice(['choices' => [CONTACT_TYPE_EMAIL, CONTACT_TYPE_PHONE], 'message' => 'The field type for contacts must be either EMAIL or PHONE.'])
+                            new Assert\Choice(['choices' => $allowedContactCodes, 'message' => 'It has been selected an invalid value for contact. Valid values are: ' . implode(', ', array_keys($allowedContactCodes))])
                         ],
                         'value' => new Assert\NotBlank(['message' => 'The field value for contacts cannot be blank.']),
                     ],
@@ -155,8 +168,7 @@ $app->group('/api', function (RouteCollectorProxy $group) use ($db) {
 
 
         if(isset($payload['human']['category'])) {
-            $category = $db->query('SELECT id FROM humans_categories_types WHERE code = %s', $payload['human']['category'])->fetch();
-            $payload['human']['category'] = $category->id;
+            $payload['human']['category'] = $categoriesTypes[$payload['human']['category']]['id'];
         }
         
         $db->query('INSERT INTO humans %v', $payload['human']);
@@ -169,16 +181,9 @@ $app->group('/api', function (RouteCollectorProxy $group) use ($db) {
         $db->query('INSERT INTO humans_social_attributes %v', $payload['socialAttributes']);
 
         if(isset($payload['contacts'])) {
-            // Get contacts types (EMAIL, PHONE)
-            $contactsTypes = $db->query('SELECT * FROM humans_contacts_types');
-
-            while($row = $contactsTypes->fetch()) {
-                $contactsTypesArray[$row->code] = $row->id;
-            }
-
             foreach($payload['contacts'] as $contact) {
                 $contact['human_id'] = $human_id;
-                $contact['type'] = $contactsTypesArray[$contact['type']];
+                $contact['type'] = $contactsTypes[$contact['type']]['id'];
 
                 $db->query('INSERT INTO humans_contacts %v', $contact);
             }
