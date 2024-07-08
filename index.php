@@ -8,6 +8,7 @@ use Slim\Routing\RouteCollectorProxy;
 use Symfony\Component\Validator\Validation;
 use Symfony\Component\Validator\Constraints as Assert;
 use App\Middleware\JsonBodyParser\Middleware as JsonBodyParserMiddleware;
+use Symfony\Component\Validator\Constraints\Regex;
 
 require_once('config.php');
 require_once('vendor/autoload.php');
@@ -18,7 +19,10 @@ $app = AppFactory::create();
 
 $app->add(new JsonBodyParserMiddleware());
 
+
 $app->group('/api', function (RouteCollectorProxy $group) use ($db) {
+    
+    // --- Create a new human ---
     $group->put('/human/add', function ($request, $response, $args) use ($db) {
 
         $payload = $request->getParsedBody();
@@ -195,6 +199,160 @@ $app->group('/api', function (RouteCollectorProxy $group) use ($db) {
         return $response
               ->withHeader('Content-Type', 'application/json')
               ->withStatus(201);
+    });
+
+    // --- Update a human by id ---
+    $group->post('/human/update/{humanId}', function ($request, $response, $args) use ($db) {
+        $humanId = $args['humanId'];
+
+        // Check if the id is a number
+        if(!is_numeric($humanId)) {
+            $errorMessage = json_encode(["message" => "Invalid argument, humanId must be a number."]);
+            $response->getBody()->write($errorMessage);
+
+            return $response
+            ->withHeader('Content-Type', 'application/json')
+            ->withStatus(400);
+        }
+
+
+        // Check if the human exists
+        $human = $db->fetchSingle('SELECT id FROM humans WHERE id = %i', $humanId);
+        if(!$human ) {
+            $errorMessage = json_encode(["message" => "Human with id " . $humanId . " not found."]);
+            $response->getBody()->write($errorMessage);
+
+            return $response
+            ->withHeader('Content-Type', 'application/json')
+            ->withStatus(404);
+        }
+
+        // Check if the request contains payload with human, physicalAttributes or socialAttributes data
+        $payload = $request->getParsedBody();
+        if(!isset($payload['human']) && !isset($payload['physicalAttributes']) && !isset($payload['socialAttributes'])) {
+            $errorMessage = json_encode(["message" => "The request must contain payload atleast with human, physicalAttributes or socialAttributes data"]);
+            $response->getBody()->write($errorMessage);
+
+            return $response
+            ->withHeader('Content-Type', 'application/json')
+            ->withStatus(400);
+        }
+
+        // Prepare data for categories
+        $humansCategoriesTypes = $db->query('SELECT * FROM humans_categories_types');
+        $categoriesTypes = [];
+        $allowedCategoryCodes = [];
+
+        while($row = $humansCategoriesTypes->fetch()) {
+            $categoriesTypes[$row->code] = ['id' => $row->id, 'title' => $row->title];
+            $allowedCategoryCodes[] = $row->code;
+        }
+        
+        $validator = Validation::createValidator();
+
+        // Process the human data if present
+        if(isset($payload['human'])) {
+            $humanConstraints = new Assert\Collection([
+                'fields' => [
+                    'firstname' => new Assert\Optional([new Assert\NotBlank(['message' => 'The field firstname for human cannot be blank.'])]),
+                    'lastname' => new Assert\Optional([new Assert\NotBlank(['message' => 'The field lastname for human cannot be blank.'])]),
+                    'fullname' => new Assert\Optional([new Assert\NotBlank(['message' => 'The field fullname for human cannot be blank if present.'])]),
+                    'alias' => new Assert\Optional([new Assert\NotBlank(['message' => 'The field alias for human cannot be blank if present.'])]),
+                    'gender' => new Assert\Optional([new Assert\NotBlank(['message' => 'The field gender for human cannot be blank']), new Assert\Choice(['choices' => ['m', 'f']])]),	
+                    'birth_date' => new Assert\Optional([new Assert\Date(['message' => 'The field birth_date for human must be a valid date if present.'])]),
+                    'death_date' => new Assert\Optional([new Assert\Date(['message' => 'The field death_date for human must be a valid date if present.'])]),
+                    'country_code' => new Assert\Optional([new Assert\NotBlank(['message' => 'The field country_code for human cannot be blank if present.'])]),
+                    'sex_orientation' => new Assert\Optional([new Assert\NotBlank(['message' => 'The field sex_orientation for human cannot be blank if present.'])]),
+                    'religion' => new Assert\Optional([new Assert\NotBlank(['message' => 'The field religion for human cannot be blank if present.'])]),
+                    'category' => new Assert\Optional([
+                        new Assert\NotBlank(['message' => 'The field category for human cannot be blank if present.']),
+                        new Assert\Choice(['choices' => $allowedCategoryCodes, 'message' => 'It has been selected an invalid value for category. Valid values are: ' . implode(', ', array_keys($allowedCategoryCodes))])
+                    ])
+                ],
+                'allowExtraFields' => false, // Povolit extra fieldy
+                'missingFieldsMessage' => 'The field {{ field }} for human is required.',
+                'extraFieldsMessage' => 'Unknown field(s) found for human: {{ field }}',
+            ]);
+
+            $violations = $validator->validate($payload['human'], $humanConstraints);
+            if (count($violations) > 0) {
+                foreach ($violations as $violation) {
+                    $errorMessage = json_encode(["message" => $violation->getMessage()]);
+                    $response->getBody()->write($errorMessage);
+
+                    return $response
+                    ->withHeader('Content-Type', 'application/json')
+                    ->withStatus(422);
+                }
+            }
+
+            if(isset($payload['human']['category'])) {
+                $payload['human']['category'] = $categoriesTypes[$payload['human']['category']]['id'];
+            }
+
+            $db->query('UPDATE humans SET %a WHERE id = %i', $payload['human'], $humanId);
+        }
+
+        // Process the human data if present
+        if(isset($payload['physicalAttributes'])) {
+            $physicalAttributesContraints = new Assert\Collection([
+                'fields' => [
+                    'height' => new Assert\Optional([new Assert\NotBlank(['message' => 'The field height for physical attributes cannot be blank if present.'])]),
+                    'weight' => new Assert\Optional([new Assert\NotBlank(['message' => 'The field weight for physical attributes cannot be blank if present.'])]),
+                    'eyes_color' => new Assert\Optional([new Assert\NotBlank(['message' => 'The field eyes_color for physical attributes cannot be blank if present.'])]),
+                    'hair_color' => new Assert\Optional([new Assert\NotBlank(['message' => 'The field hair_color for physical attributes cannot be blank if present.'])]),
+                ],
+                'allowExtraFields' => false, // povolit extra fieldy
+                'extraFieldsMessage' => 'Unknown field(s) found for physical attributes: {{ field }}',
+            ]);
+
+            $violations = $validator->validate($payload['physicalAttributes'], $physicalAttributesContraints);
+            if (count($violations) > 0) {
+                foreach ($violations as $violation) {
+                    $errorMessage = json_encode(["message" => $violation->getMessage()]);
+                    $response->getBody()->write($errorMessage);
+
+                    return $response
+                    ->withHeader('Content-Type', 'application/json')
+                    ->withStatus(422);
+                }
+            }
+
+            $db->query('UPDATE humans_physical_attributes SET %a WHERE human_id = %i', $payload['physicalAttributes'], $humanId);
+        }
+
+        if(isset($payload['socialAttributes'])) {
+            $socialAttributesContraints = new Assert\Collection([
+                'fields' => [
+                    'siblings' => new Assert\Optional([new Assert\NotBlank(['message' => 'The field siblings for social attributes cannot be blank if present.'])]),
+                    'children' => new Assert\Optional([new Assert\NotBlank(['message' => 'The field children for social attributes cannot be blank if present.'])]),
+                    'marriages' => new Assert\Optional([new Assert\NotBlank(['message' => 'The field marriages for social attributes cannot be blank if present.'])]),
+                ],
+                'allowExtraFields' => false, // povolit extra fieldy
+                'extraFieldsMessage' => 'Unknown field(s) found for social attributes: {{ field }}',
+            ]);
+
+            $violations = $validator->validate($payload['socialAttributes'], $socialAttributesContraints);
+            if (count($violations) > 0) {
+                foreach ($violations as $violation) {
+                    $errorMessage = json_encode(["message" => $violation->getMessage()]);
+                    $response->getBody()->write($errorMessage);
+
+                    return $response
+                    ->withHeader('Content-Type', 'application/json')
+                    ->withStatus(422);
+                }
+            }
+
+            $db->query('UPDATE humans_social_attributes SET %a WHERE human_id = %i', $payload['socialAttributes'], $humanId);
+        }
+
+        $payload = json_encode(["message" => "Human updated successfully."]);
+        $response->getBody()->write($payload);
+        
+        return $response
+              ->withHeader('Content-Type', 'application/json')
+              ->withStatus(200);
     });
 });
 
