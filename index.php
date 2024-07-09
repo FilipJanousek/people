@@ -8,7 +8,6 @@ use Slim\Routing\RouteCollectorProxy;
 use Symfony\Component\Validator\Validation;
 use Symfony\Component\Validator\Constraints as Assert;
 use App\Middleware\JsonBodyParser\Middleware as JsonBodyParserMiddleware;
-use Symfony\Component\Validator\Constraints\Regex;
 
 require_once('config.php');
 require_once('vendor/autoload.php');
@@ -22,8 +21,8 @@ $app->add(new JsonBodyParserMiddleware());
 
 $app->group('/api', function (RouteCollectorProxy $group) use ($db) {
     
-    // --- Create a new human ---
-    $group->put('/human/add', function ($request, $response, $args) use ($db) {
+    // === Create a new human ==============================================================================================================================
+    $group->post('/humans/add', function ($request, $response, $args) use ($db) {
 
         $payload = $request->getParsedBody();
 
@@ -35,6 +34,8 @@ $app->group('/api', function (RouteCollectorProxy $group) use ($db) {
             ->withHeader('Content-Type', 'application/json')
             ->withStatus(400);
         }
+
+        // TODO: Check if the contacts are valid data structure
 
         
         $humansCategoriesTypes = $db->query('SELECT * FROM humans_categories_types');
@@ -92,6 +93,8 @@ $app->group('/api', function (RouteCollectorProxy $group) use ($db) {
         }
 
         if(isset($payload['physicalAttributes'])) {
+            // TODO: Check if the contacts are valid data structure
+
             $physicalAttributesContraints = new Assert\Collection([
                 'fields' => [
                     'height' => new Assert\Optional([new Assert\NotBlank(['message' => 'The field height for physical attributes cannot be blank if present.'])]),
@@ -117,6 +120,8 @@ $app->group('/api', function (RouteCollectorProxy $group) use ($db) {
         }
 
         if(isset($payload['socialAttributes'])) {
+            // TODO: Check if the contacts are valid data structure
+
             $socialAttributesContraints = new Assert\Collection([
                 'fields' => [
                     'siblings' => new Assert\Optional([new Assert\NotBlank(['message' => 'The field siblings for social attributes cannot be blank if present.'])]),
@@ -141,6 +146,7 @@ $app->group('/api', function (RouteCollectorProxy $group) use ($db) {
         }
 
         if(isset($payload['contacts'])) {
+            // TODO: Check if the contacts are valid data structure
 
             $constraints = new Assert\All([
                 new Assert\Collection([
@@ -201,8 +207,104 @@ $app->group('/api', function (RouteCollectorProxy $group) use ($db) {
               ->withStatus(201);
     });
 
-    // --- Update a human by id ---
-    $group->post('/human/update/{humanId}', function ($request, $response, $args) use ($db) {
+    // === Create a contacts for humans ==============================================================================================================================
+    $group->post('/humans/contacts/add/{humanId}', function ($request, $response, $args) use ($db) {
+        $humanId = $args['humanId'];
+
+        // Check if the id is a number
+        if(!is_numeric($humanId)) {
+            $errorMessage = json_encode(["message" => "Invalid argument, humanId must be a number."]);
+            $response->getBody()->write($errorMessage);
+
+            return $response
+            ->withHeader('Content-Type', 'application/json')
+            ->withStatus(400);
+        }
+
+        // Check if the human exists
+        $human = $db->fetchSingle('SELECT id FROM humans WHERE id = %i', $humanId);
+        if(!$human ) {
+            $errorMessage = json_encode(["message" => "Human with id " . $humanId . " not found."]);
+            $response->getBody()->write($errorMessage);
+
+            return $response
+            ->withHeader('Content-Type', 'application/json')
+            ->withStatus(404);
+        }
+
+        // Check if the request contains payload with contacts data
+        $payload = $request->getParsedBody();
+        if(!isset($payload['contacts'])) {
+            $errorMessage = json_encode(["message" => "The request must contain payload with human data"]);
+            $response->getBody()->write($errorMessage);
+
+            return $response
+            ->withHeader('Content-Type', 'application/json')
+            ->withStatus(400);
+        }
+
+        // TODO: Check if the contacts are valid data structure
+    
+        $humansContactsTypes = $db->query('SELECT * FROM humans_contacts_types');
+        $contactsTypes = [];
+        $allowedContactCodes = [];
+
+        while($row = $humansContactsTypes->fetch()) {
+            $contactsTypes[$row->code] = ['id' => $row->id, 'title' => $row->title];
+            $allowedContactCodes[] = $row->code;
+           
+        }
+
+        if(isset($payload['contacts'])) {
+            $validator = Validation::createValidator();
+            $constraints = new Assert\All([
+                new Assert\Collection([
+                    'fields' => [
+                        'type' => [
+                            new Assert\NotBlank(['message' => 'The field type for contacts cannot be blank.']), 
+                            new Assert\Choice(['choices' => $allowedContactCodes, 'message' => 'It has been selected an invalid value for contact. Valid values are: ' . implode(', ', array_keys($allowedContactCodes))])
+                        ],
+                        'value' => new Assert\NotBlank(['message' => 'The field value for contacts cannot be blank.']),
+                    ],
+                    'allowExtraFields' => false, // povolit extra fieldy
+                    'missingFieldsMessage' => 'The field {{ field }} for contacts is required.',
+                    'extraFieldsMessage' => 'Unknown field(s) found for contacts: {{ field }}',
+                ])
+            ]);
+
+            $violations = $validator->validate($payload['contacts'], $constraints);
+            if (count($violations) > 0) {
+                foreach ($violations as $violation) {
+                    $errorMessage = json_encode(["message" => $violation->getMessage()]);
+                    $response->getBody()->write($errorMessage);
+
+                    return $response
+                    ->withHeader('Content-Type', 'application/json')
+                    ->withStatus(422);
+                }
+            }
+        }
+
+        // TODO: Check if contact data exists in the database and if not, create it
+        if(isset($payload['contacts'])) {
+            foreach($payload['contacts'] as $contact) {
+                $contact['human_id'] = $humanId;
+                $contact['type'] = $contactsTypes[$contact['type']]['id'];
+
+                $db->query('INSERT INTO humans_contacts %v', $contact);
+            }
+        }
+
+        $payload = json_encode(["message" => "Contacts for human created successfully."]);
+        $response->getBody()->write($payload);
+        
+        return $response
+              ->withHeader('Content-Type', 'application/json')
+              ->withStatus(201);
+    });
+
+    // === Update a human by id ==============================================================================================================================
+    $group->put('/humans/update/{humanId}', function ($request, $response, $args) use ($db) {
         $humanId = $args['humanId'];
 
         // Check if the id is a number
@@ -229,6 +331,7 @@ $app->group('/api', function (RouteCollectorProxy $group) use ($db) {
 
         // Check if the request contains payload with human, physicalAttributes or socialAttributes data
         $payload = $request->getParsedBody();
+
         if(!isset($payload['human']) && !isset($payload['physicalAttributes']) && !isset($payload['socialAttributes'])) {
             $errorMessage = json_encode(["message" => "The request must contain payload atleast with human, physicalAttributes or socialAttributes data"]);
             $response->getBody()->write($errorMessage);
@@ -237,6 +340,8 @@ $app->group('/api', function (RouteCollectorProxy $group) use ($db) {
             ->withHeader('Content-Type', 'application/json')
             ->withStatus(400);
         }
+
+        // TODO: Check if the contacts are valid data structure
 
         // Prepare data for categories
         $humansCategoriesTypes = $db->query('SELECT * FROM humans_categories_types');
